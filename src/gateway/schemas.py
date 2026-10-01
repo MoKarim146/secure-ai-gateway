@@ -1,9 +1,13 @@
 """Request and response bodies. Chat shapes follow the OpenAI API so existing clients work as-is."""
 
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PlainSerializer
+
+# A JSON string in plain notation: exact, never a rounded float, and never "0E-8", which
+# is how Python prints a zero read from a NUMERIC column.
+Money = Annotated[Decimal, PlainSerializer(lambda value: format(value, "f"), return_type=str)]
 
 
 class ChatMessage(BaseModel):
@@ -68,13 +72,12 @@ class ModelUsage(BaseModel):
     requests: int
     prompt_tokens: int
     completion_tokens: int
-    # Decimal serialises as a JSON string: exact, never a rounded float.
-    cost_usd: Decimal
+    cost_usd: Money
 
 
 class UsageSummary(BaseModel):
     requests: int
     prompt_tokens: int
     completion_tokens: int
-    cost_usd: Decimal
+    cost_usd: Money
     by_model: list[ModelUsage]

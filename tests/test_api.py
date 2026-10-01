@@ -1,6 +1,9 @@
+from decimal import Decimal
 from typing import Any
 
 from fastapi.testclient import TestClient
+
+from gateway.schemas import ModelUsage
 
 
 def chat(client: TestClient, content: str, **extra: Any) -> Any:
@@ -55,6 +58,14 @@ def test_usage_records_exact_cost(client: TestClient) -> None:
         }
     ]
     assert usage["cost_usd"] == "0.00000750"
+
+
+def test_money_is_serialised_without_exponent() -> None:
+    # PostgreSQL returns a NUMERIC(12, 8) zero as Decimal("0E-8").
+    usage = ModelUsage(
+        model="m", requests=1, prompt_tokens=1, completion_tokens=1, cost_usd=Decimal("0E-8")
+    )
+    assert usage.model_dump(mode="json")["cost_usd"] == "0.00000000"
 
 
 def test_unknown_model_returns_404_in_error_format(client: TestClient) -> None:
