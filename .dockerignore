@@ -1,0 +1,10 @@
+# The Dockerfile copies explicit paths only; this just keeps the build context small and
+# keeps local secrets (.env) out of it.
+.git
+.venv
+.env
+**/__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
