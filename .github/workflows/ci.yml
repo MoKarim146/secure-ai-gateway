@@ -1,7 +1,9 @@
 name: CI
 
+# Pull requests cover branches; pushes only build main, so a PR commit doesn't run twice.
 on:
   push:
+    branches: [main]
   pull_request:
 
 # Read-only token: this workflow never writes back to the repository.
