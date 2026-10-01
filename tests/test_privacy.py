@@ -73,6 +73,7 @@ def test_card_inside_an_iban_is_reported_once_as_iban() -> None:
 def test_checksums() -> None:
     assert valid_iban("BE68 5390 0754 7034")
     assert not valid_iban("BE68 5390 0754 7035")
+    assert not valid_iban("NL91 ABNA 0417")  # shorter than any country's IBAN
     assert valid_card("5555 5555 5555 4444")
     assert not valid_card("5555 5555 5555 4445")
 

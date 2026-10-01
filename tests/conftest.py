@@ -47,6 +47,8 @@ def make_settings(database_url: str, **overrides: Any) -> Settings:
         "ollama_base_url": "",
         "openai_api_key": "",
         "anthropic_api_key": "",
+        "pii_detector": "regex",
+        "pii_trusted_providers": frozenset(),
         "max_request_bytes": MAX_REQUEST_BYTES,
     }
     return Settings(_env_file=None, **(values | overrides))

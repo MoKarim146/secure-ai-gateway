@@ -86,6 +86,16 @@ def test_usage_records_exact_cost(client: TestClient) -> None:
     assert usage["cost_usd"] == "0.00000750"
 
 
+def test_personal_data_is_redacted_and_restored(client: TestClient) -> None:
+    response = chat(client, "Hi, I am reachable at jane@example.com")
+    # The mock echoes what it received; the gateway puts the address back afterwards.
+    assert response.json()["choices"][0]["message"]["content"] == (
+        "[mock-small] You said: Hi, I am reachable at jane@example.com"
+    )
+    assert response.headers["X-PII-Redactions"] == "1"
+    assert chat(client, "Hi!").headers["X-PII-Redactions"] == "0"
+
+
 def test_money_is_serialised_without_exponent() -> None:
     # PostgreSQL returns a NUMERIC(12, 8) zero as Decimal("0E-8").
     usage = ModelUsage(
