@@ -4,12 +4,13 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from gateway.completions import create_completion
 from gateway.config import ModelInfo
 from gateway.errors import APIError
+from gateway.privacy import PrivacyPolicy
 from gateway.providers import Provider
 from gateway.schemas import (
     ChatCompletionRequest,
@@ -27,6 +28,7 @@ class Gateway:
 
     catalog: list[ModelInfo]
     providers: dict[str, Provider]
+    privacy: PrivacyPolicy
     sessionmaker: async_sessionmaker[AsyncSession]
 
 
@@ -56,11 +58,13 @@ async def health() -> dict[str, str]:
 
 @v1.post("/chat/completions")
 async def chat_completions(
-    body: ChatCompletionRequest, gateway: GatewayDep, session: SessionDep
+    body: ChatCompletionRequest, gateway: GatewayDep, session: SessionDep, response: Response
 ) -> ChatCompletionResponse:
     if body.stream:
         raise APIError(400, "Streaming is not supported yet", code="stream_not_supported")
-    result = await create_completion(body, gateway.catalog, gateway.providers)
+    result = await create_completion(body, gateway.catalog, gateway.providers, gateway.privacy)
+    # A count only, never the values: lets the client see that personal data was replaced.
+    response.headers["X-PII-Redactions"] = str(result.redactions)
     usage = result.response.usage
     await record_usage(
         session, result.model, usage.prompt_tokens, usage.completion_tokens, result.latency_ms

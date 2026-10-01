@@ -3,6 +3,7 @@
 import asyncio
 import os
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from alembic import command
@@ -36,17 +37,25 @@ async def empty_tables(database_url: str) -> None:
     await engine.dispose()
 
 
+def make_settings(database_url: str, **overrides: Any) -> Settings:
+    """Settings for tests: only the offline mock provider unless a test switches more on."""
+    # Explicit values beat environment variables, so a developer's own .env or exported
+    # OLLAMA_BASE_URL or API keys can't change what the tests see or call.
+    values: dict[str, Any] = {
+        "database_url": database_url,
+        "mock_provider_enabled": True,
+        "ollama_base_url": "",
+        "openai_api_key": "",
+        "anthropic_api_key": "",
+        "pii_detector": "regex",
+        "pii_trusted_providers": frozenset(),
+        "max_request_bytes": MAX_REQUEST_BYTES,
+    }
+    return Settings(_env_file=None, **(values | overrides))
+
+
 @pytest.fixture
 def client(migrated_database: str) -> Iterator[TestClient]:
     asyncio.run(empty_tables(migrated_database))
-    # Explicit values beat environment variables, so a developer's own .env or exported
-    # OLLAMA_BASE_URL can't change what the tests see.
-    settings = Settings(
-        _env_file=None,
-        database_url=migrated_database,
-        mock_provider_enabled=True,
-        ollama_base_url="",
-        max_request_bytes=MAX_REQUEST_BYTES,
-    )
-    with TestClient(create_app(settings)) as test_client:
+    with TestClient(create_app(make_settings(migrated_database))) as test_client:
         yield test_client

@@ -15,9 +15,14 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from gateway.api import Gateway, router
 from gateway.config import Settings, load_catalog
 from gateway.errors import install_error_handlers
+from gateway.privacy import Detector, PrivacyPolicy
+from gateway.privacy.presidio import PresidioDetector
+from gateway.privacy.regex import RegexDetector
 from gateway.providers import Provider
+from gateway.providers.anthropic import AnthropicProvider
 from gateway.providers.mock import MockProvider
 from gateway.providers.ollama import OllamaProvider
+from gateway.providers.openai import OpenAIProvider
 
 
 class BodySizeLimitMiddleware:
@@ -48,20 +53,42 @@ class BodySizeLimitMiddleware:
         await self.app(scope, limited_receive, send)
 
 
+async def start_providers(settings: Settings, cleanup: AsyncExitStack) -> dict[str, Provider]:
+    """Creates each provider that is switched on. Their HTTP clients close with `cleanup`."""
+
+    async def http_client(base_url: str) -> httpx.AsyncClient:
+        # One client per provider, shared by all requests, so connections are reused.
+        client = httpx.AsyncClient(base_url=base_url, timeout=settings.provider_timeout_seconds)
+        return await cleanup.enter_async_context(client)
+
+    providers: dict[str, Provider] = {}
+    if settings.mock_provider_enabled:
+        providers["mock"] = MockProvider()
+    if settings.ollama_base_url:
+        providers["ollama"] = OllamaProvider(await http_client(settings.ollama_base_url))
+    if key := settings.openai_api_key.get_secret_value():
+        providers["openai"] = OpenAIProvider(await http_client(settings.openai_base_url), key)
+    if key := settings.anthropic_api_key.get_secret_value():
+        client = await http_client(settings.anthropic_base_url)
+        providers["anthropic"] = AnthropicProvider(client, key)
+    return providers
+
+
+def start_detector(settings: Settings) -> Detector | None:
+    if settings.pii_detector == "presidio":
+        return PresidioDetector()  # loads an NLP model: a few seconds at startup
+    if settings.pii_detector == "regex":
+        return RegexDetector()
+    return None
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async with AsyncExitStack() as cleanup:
-            providers: dict[str, Provider] = {}
-            if settings.mock_provider_enabled:
-                providers["mock"] = MockProvider()
-            if settings.ollama_base_url:
-                client = httpx.AsyncClient(
-                    base_url=settings.ollama_base_url, timeout=settings.provider_timeout_seconds
-                )
-                providers["ollama"] = OllamaProvider(await cleanup.enter_async_context(client))
+            providers = await start_providers(settings, cleanup)
 
             engine = create_async_engine(settings.database_url, pool_pre_ping=True)
             cleanup.push_async_callback(engine.dispose)
@@ -72,6 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.gateway = Gateway(
                 catalog=catalog,
                 providers=providers,
+                privacy=PrivacyPolicy(start_detector(settings), settings.pii_trusted_providers),
                 sessionmaker=async_sessionmaker(engine, expire_on_commit=False),
             )
             yield

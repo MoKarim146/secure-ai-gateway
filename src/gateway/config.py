@@ -5,7 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ONE_MILLION = Decimal(1_000_000)
@@ -20,6 +20,18 @@ class Settings(BaseSettings):
     mock_provider_enabled: bool = True
     # Empty means Ollama is switched off.
     ollama_base_url: str = ""
+    # Cloud providers switch on only when their key is set. SecretStr keeps keys out of
+    # reprs, logs and tracebacks.
+    openai_api_key: SecretStr = SecretStr("")
+    openai_base_url: str = "https://api.openai.com/v1"
+    anthropic_api_key: SecretStr = SecretStr("")
+    anthropic_base_url: str = "https://api.anthropic.com"
+    # How personal data is found before it is replaced: "regex" (built in), "presidio"
+    # (better at names; needs the presidio extra) or "off".
+    pii_detector: Literal["regex", "presidio", "off"] = "regex"
+    # Providers that may receive personal data unredacted, given as JSON in the environment:
+    # PII_TRUSTED_PROVIDERS='["ollama"]'. Empty means every provider gets placeholders.
+    pii_trusted_providers: frozenset[str] = frozenset()
     provider_timeout_seconds: float = 30.0
     max_request_bytes: int = 1_000_000
 
@@ -30,7 +42,7 @@ class ModelInfo(BaseModel):
     id: str
     # A Literal turns a typo in the TOML file into a startup error instead of a silently
     # unreachable model.
-    provider: Literal["mock", "ollama"]
+    provider: Literal["mock", "ollama", "openai", "anthropic"]
     tier: int = Field(ge=1, le=3)  # 1 = small and cheap, 2 = mid-range, 3 = premium
     input_price: Decimal = Field(ge=0)  # USD per 1M input tokens
     output_price: Decimal = Field(ge=0)  # USD per 1M output tokens

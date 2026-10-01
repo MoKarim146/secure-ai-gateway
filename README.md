@@ -7,10 +7,11 @@ leaves the system, and gives AI agents controlled access to tools over MCP.
 Applications talk to it exactly like the OpenAI API, so existing SDKs work by changing the
 base URL.
 
-> **Status: phase 1 of 8.** Working today: the OpenAI-compatible API, mock and Ollama
-> providers with fallback, cost-aware routing, and a per-request usage ledger in PostgreSQL.
-> Coming next: personal-data redaction, scoped API keys with rate limits and budgets, MCP,
-> observability, OpenAI and Anthropic adapters, and Azure deployment. See [Roadmap](#roadmap).
+> **Status: phase 2 of 8.** Working today: the OpenAI-compatible API, mock, Ollama, OpenAI
+> and Anthropic providers with fallback, cost-aware routing, a per-request usage ledger in
+> PostgreSQL, and personal data replaced by placeholders before any provider sees it.
+> Coming next: scoped API keys with rate limits and budgets, MCP, observability and Azure
+> deployment. See [Roadmap](#roadmap).
 
 ## Architecture
 
@@ -20,8 +21,11 @@ flowchart LR
     api --> router["Router<br/>complexity score → tier<br/>→ cheapest suitable model"]
     router -.reads.-> catalog[("config/models.toml<br/>price table")]
     api --> runner["Completion runner<br/>tries candidates in order"]
+    runner <--> privacy["Privacy<br/>personal data → placeholders<br/>and back in the reply"]
     runner --> mock["Mock adapter"]
     runner --> ollama["Ollama adapter"] --> ollamasrv["Ollama server"]
+    runner --> openai["OpenAI adapter"] --> openaiapi["OpenAI API"]
+    runner --> anthropic["Anthropic adapter"] --> anthropicapi["Anthropic API"]
     api --> ledger[("PostgreSQL<br/>usage_records")]
 ```
 
@@ -45,6 +49,11 @@ To also route to models running in [Ollama](https://ollama.com) on your machine,
 ```bash
 ollama pull gemma4:e4b && ollama pull gemma4:12b
 ```
+
+To route to OpenAI or Anthropic as well, set `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` in
+your shell or in `.env` before `docker compose up`. A cloud provider is only switched on when
+its key is set. OpenAI models ship in the price table; Anthropic models are added there the
+same way (see the comment in `config/models.toml`).
 
 ## API examples
 
@@ -167,6 +176,44 @@ A score of 0–1 needs tier 1, 2–3 needs tier 2, and 4 or more needs tier 3. T
 Each completed request is written to `usage_records` with model, provider, tokens, cost and
 latency. Cost is stored as `NUMERIC`, never as a float.
 
+## Personal data
+
+Before a request leaves the gateway, personal data is replaced with placeholders, and the
+real values are put back into the reply. The provider never sees them:
+
+```text
+Client sends:        Please mail jane@example.com about IBAN NL91 ABNA 0417 1643 00
+Provider receives:   Please mail <EMAIL_1> about IBAN <IBAN_1>
+Provider replies:    I will mail <EMAIL_1> today.
+Client receives:     I will mail jane@example.com today.
+```
+
+| Detected | How (built-in `regex` detector) |
+|---|---|
+| Email addresses | Pattern |
+| Phone numbers | International (`+31 …`), national (`06 …`, `020-…`) and North American formats, 9–15 digits |
+| IBANs | Pattern plus the mod-97 checksum |
+| Card numbers | 13–19 digits plus the Luhn checksum |
+| Names | Only after a cue: `Mr.`, `Dr.`, `Dear …`, `my name is …`, `Name: …` |
+
+- The same value gets the same placeholder in every message, so the model can tell that two
+  mentions are one person. Placeholders are kept in memory for that request only and are
+  never logged.
+- Fallback providers receive the same redacted text. Each response has an
+  `X-PII-Redactions` header with the number of values replaced (a count, never the values).
+- `PII_TRUSTED_PROVIDERS` lists providers that may see the original text, for example
+  `'["ollama"]'` when Ollama runs on your own machine. By default every provider gets
+  placeholders.
+- For real name detection, use the optional [Presidio](https://microsoft.github.io/presidio/)
+  detector (`uv sync --extra presidio`, then `PII_DETECTOR=presidio`). It finds names like
+  "Pieter de Vries" without a cue, at the cost of a ~400 MB NLP model and more CPU per
+  request. The Docker image is built without it.
+
+Limits: detection is best-effort, so unusual formats can slip through. Restoring relies on
+the model repeating placeholders exactly; a model that rewrites `<EMAIL_1>` as `EMAIL_1`
+leaves the placeholder in the reply instead of the value. All detection runs in linear time,
+so a hostile request body can't stall the gateway.
+
 ## Configuration
 
 Settings come from environment variables (or a local `.env`; see `.env.example`).
@@ -176,6 +223,12 @@ Settings come from environment variables (or a local `.env`; see `.env.example`)
 | `DATABASE_URL` | *(required)* | PostgreSQL URL, e.g. `postgresql+asyncpg://user:pass@host:5432/db` |
 | `MOCK_PROVIDER_ENABLED` | `true` | Serve the offline `mock-*` models |
 | `OLLAMA_BASE_URL` | *(empty: off)* | Ollama server, e.g. `http://localhost:11434` |
+| `OPENAI_API_KEY` | *(empty: off)* | Switches on the OpenAI provider |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Any server speaking the OpenAI Chat Completions API |
+| `ANTHROPIC_API_KEY` | *(empty: off)* | Switches on the Anthropic provider |
+| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Anthropic Messages API endpoint |
+| `PII_DETECTOR` | `regex` | `regex`, `presidio` (needs the extra) or `off` |
+| `PII_TRUSTED_PROVIDERS` | `[]` | JSON list of providers that may see personal data, e.g. `'["ollama"]'` |
 | `PROVIDER_TIMEOUT_SECONDS` | `30` | Time allowed per provider call before falling back |
 | `MAX_REQUEST_BYTES` | `1000000` | Larger request bodies are rejected with 413 |
 | `MODELS_FILE` | `config/models.toml` | Model catalog and price table |
@@ -183,6 +236,9 @@ Settings come from environment variables (or a local `.env`; see `.env.example`)
 Models, tiers, prices (USD per 1M tokens), context windows and capabilities live in
 [`config/models.toml`](config/models.toml). A model is only offered when its provider is
 switched on.
+
+The cloud adapters don't forward `temperature`: current reasoning models reject non-default
+sampling parameters, which would turn every such request into a failed call and a fallback.
 
 ## Development
 
@@ -196,6 +252,7 @@ uv run alembic upgrade head
 uv run uvicorn --factory gateway.main:create_app --reload
 
 uv run pytest                # tests + coverage (uses the gateway_test database)
+uv sync --extra presidio     # optional: also runs the real Presidio test (~400 MB model)
 uv run ruff check . && uv run ruff format --check .
 uv run mypy                  # strict mode
 ```
@@ -211,11 +268,13 @@ a Docker build on every push and pull request.
 - **Rules-based routing first**: explainable, testable, free to run. [ADR 0003](docs/decisions/0003-rules-based-routing-first.md)
 - **Hand-written provider adapters**, no LiteLLM-style wrapper: full control over timeouts,
   errors and what gets logged. [ADR 0004](docs/decisions/0004-hand-written-provider-adapters.md)
+- **Reversible placeholders for personal data**: providers never see it, clients get it
+  back, and the detector is pluggable. [ADR 0005](docs/decisions/0005-reversible-placeholders-for-personal-data.md)
 
 ## Roadmap
 
 1. ~~Skeleton, REST API, mock and Ollama adapters, router, cost tracking, PostgreSQL, Compose, CI~~
-2. Personal data removal and restore
+2. ~~OpenAI and Anthropic adapters; personal data removal and restore~~
 3. Scoped API keys, rate limiting, audit log, budgets
 4. MCP server, and MCP client with a tool allowlist
 5. Structured logs, Prometheus metrics, Grafana dashboard

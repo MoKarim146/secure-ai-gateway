@@ -1,8 +1,11 @@
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
+from conftest import make_settings
 from fastapi.testclient import TestClient
 
+from gateway.main import create_app
 from gateway.schemas import ModelUsage
 
 
@@ -20,6 +23,29 @@ def test_models_lists_auto_and_enabled_models_only(client: TestClient) -> None:
     ids = [m["id"] for m in client.get("/v1/models").json()["data"]]
     # Ollama is switched off in tests, so its catalog entries must not appear.
     assert ids == ["auto", "mock-small", "mock-medium", "mock-large"]
+
+
+def test_cloud_providers_switch_on_with_their_api_key(
+    migrated_database: str, tmp_path: Path
+) -> None:
+    models_file = tmp_path / "models.toml"
+    models_file.write_text(
+        "".join(
+            f'[[models]]\nid = "{provider}-model"\nprovider = "{provider}"\ntier = 1\n'
+            "input_price = 1\noutput_price = 1\ncontext_window = 1000\n"
+            for provider in ("mock", "openai", "anthropic")
+        )
+    )
+    settings = make_settings(
+        migrated_database,
+        models_file=models_file,
+        mock_provider_enabled=False,
+        openai_api_key="sk-test",
+        anthropic_api_key="sk-ant-test",
+    )
+    with TestClient(create_app(settings)) as client:
+        ids = [m["id"] for m in client.get("/v1/models").json()["data"]]
+    assert ids == ["auto", "openai-model", "anthropic-model"]
 
 
 def test_chat_completion_has_openai_shape(client: TestClient) -> None:
@@ -58,6 +84,16 @@ def test_usage_records_exact_cost(client: TestClient) -> None:
         }
     ]
     assert usage["cost_usd"] == "0.00000750"
+
+
+def test_personal_data_is_redacted_and_restored(client: TestClient) -> None:
+    response = chat(client, "Hi, I am reachable at jane@example.com")
+    # The mock echoes what it received; the gateway puts the address back afterwards.
+    assert response.json()["choices"][0]["message"]["content"] == (
+        "[mock-small] You said: Hi, I am reachable at jane@example.com"
+    )
+    assert response.headers["X-PII-Redactions"] == "1"
+    assert chat(client, "Hi!").headers["X-PII-Redactions"] == "0"
 
 
 def test_money_is_serialised_without_exponent() -> None:

@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Protocol
 
+import httpx
+
 from gateway.schemas import ChatCompletionRequest
 
 
@@ -11,6 +13,22 @@ class ProviderError(Exception):
 
     Raising this tells the gateway to fall back to the next candidate model.
     """
+
+
+# What a failed provider call can raise: transport and HTTP errors, or a reply body that
+# isn't JSON or lacks the fields the adapter reads.
+CALL_ERRORS = (httpx.HTTPError, LookupError, TypeError, ValueError)
+
+
+def provider_error(provider: str, exc: Exception) -> ProviderError:
+    """Describes a failed call by HTTP status or exception type only.
+
+    Never by response body: an upstream error body can echo prompt content, which must not
+    reach the logs.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        return ProviderError(f"{provider}: HTTP {exc.response.status_code}")
+    return ProviderError(f"{provider}: {type(exc).__name__}")
 
 
 @dataclass(frozen=True)

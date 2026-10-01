@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-from gateway.providers import Completion, ProviderError
+from gateway.providers import CALL_ERRORS, Completion, provider_error
 from gateway.schemas import ChatCompletionRequest
 
 
@@ -40,7 +40,6 @@ class OllamaProvider:
                 finish_reason="length" if data.get("done_reason") == "length" else "stop",
             )
         # Timeouts, refused connections, HTTP errors and malformed bodies all mean "try the
-        # next provider". Only the exception type goes in the message: the body could echo
-        # prompt content, which must not reach the logs.
-        except (httpx.HTTPError, KeyError, ValueError) as exc:
-            raise ProviderError(f"ollama: {type(exc).__name__}") from exc
+        # next provider".
+        except CALL_ERRORS as exc:
+            raise provider_error("ollama", exc) from exc
