@@ -26,8 +26,9 @@ class Settings(BaseSettings):
     openai_base_url: str = "https://api.openai.com/v1"
     anthropic_api_key: SecretStr = SecretStr("")
     anthropic_base_url: str = "https://api.anthropic.com"
-    # How personal data is found before it is replaced: "regex" (built in) or "off".
-    pii_detector: Literal["regex", "off"] = "regex"
+    # How personal data is found before it is replaced: "regex" (built in), "presidio"
+    # (better at names; needs the presidio extra) or "off".
+    pii_detector: Literal["regex", "presidio", "off"] = "regex"
     # Providers that may receive personal data unredacted, given as JSON in the environment:
     # PII_TRUSTED_PROVIDERS='["ollama"]'. Empty means every provider gets placeholders.
     pii_trusted_providers: frozenset[str] = frozenset()

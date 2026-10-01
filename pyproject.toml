@@ -14,6 +14,14 @@ dependencies = [
     "uvicorn>=0.54.0",
 ]
 
+[project.optional-dependencies]
+# Name detection with an NLP model. The spaCy model comes from a pinned wheel (see
+# tool.uv.sources) because spaCy's own download command needs pip, which uv venvs lack.
+presidio = [
+    "en-core-web-lg",
+    "presidio-analyzer>=2.2.364",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -45,6 +53,14 @@ strict = true
 files = ["src", "tests", "migrations"]
 plugins = ["pydantic.mypy"]
 
+# Optional extra: CI type-checks without it installed.
+[[tool.mypy.overrides]]
+module = ["presidio_analyzer", "presidio_analyzer.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--cov=gateway --cov-report=term-missing"
+
+[tool.uv.sources]
+en-core-web-lg = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl" }

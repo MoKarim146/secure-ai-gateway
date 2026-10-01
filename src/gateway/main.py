@@ -15,7 +15,8 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from gateway.api import Gateway, router
 from gateway.config import Settings, load_catalog
 from gateway.errors import install_error_handlers
-from gateway.privacy import PrivacyPolicy
+from gateway.privacy import Detector, PrivacyPolicy
+from gateway.privacy.presidio import PresidioDetector
 from gateway.privacy.regex import RegexDetector
 from gateway.providers import Provider
 from gateway.providers.anthropic import AnthropicProvider
@@ -73,6 +74,14 @@ async def start_providers(settings: Settings, cleanup: AsyncExitStack) -> dict[s
     return providers
 
 
+def start_detector(settings: Settings) -> Detector | None:
+    if settings.pii_detector == "presidio":
+        return PresidioDetector()  # loads an NLP model: a few seconds at startup
+    if settings.pii_detector == "regex":
+        return RegexDetector()
+    return None
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
 
@@ -87,11 +96,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Models of switched-off providers are dropped here, so routing and /v1/models
             # never see them.
             catalog = [m for m in load_catalog(settings.models_file) if m.provider in providers]
-            detector = RegexDetector() if settings.pii_detector == "regex" else None
             app.state.gateway = Gateway(
                 catalog=catalog,
                 providers=providers,
-                privacy=PrivacyPolicy(detector, settings.pii_trusted_providers),
+                privacy=PrivacyPolicy(start_detector(settings), settings.pii_trusted_providers),
                 sessionmaker=async_sessionmaker(engine, expire_on_commit=False),
             )
             yield

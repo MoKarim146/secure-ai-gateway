@@ -1,8 +1,12 @@
+import importlib.util
+import sys
 import time
+from dataclasses import dataclass
 
 import pytest
 
 from gateway.privacy import Redactor, Span, without_overlaps
+from gateway.privacy.presidio import KINDS, PresidioDetector
 from gateway.privacy.regex import RegexDetector, valid_card, valid_iban
 from gateway.schemas import ChatCompletionRequest
 
@@ -167,3 +171,50 @@ def test_unknown_or_mangled_placeholders_are_left_alone() -> None:
 def test_overlapping_spans_keep_the_earliest_then_longest() -> None:
     spans = [Span(5, 9, "B"), Span(0, 6, "A"), Span(0, 3, "C"), Span(9, 12, "D")]
     assert without_overlaps(spans) == [Span(0, 6, "A"), Span(9, 12, "D")]
+
+
+@dataclass
+class FakeFinding:
+    entity_type: str
+    start: int
+    end: int
+
+
+class FakeAnalyzer:
+    def __init__(self, findings: list[FakeFinding]) -> None:
+        self.findings = findings
+        self.asked_for: list[str] = []
+
+    def analyze(self, text: str, language: str, entities: list[str]) -> list[FakeFinding]:
+        self.asked_for = entities
+        return self.findings
+
+
+def test_presidio_findings_become_placeholder_kinds() -> None:
+    analyzer = FakeAnalyzer([FakeFinding("PERSON", 0, 4), FakeFinding("EMAIL_ADDRESS", 8, 24)])
+    detector = PresidioDetector(analyzer)
+    assert detector.find("Jane at jane@example.com") == [
+        Span(0, 4, "PERSON"),
+        Span(8, 24, "EMAIL"),
+    ]
+    # Only types the gateway has a placeholder kind for are requested.
+    assert analyzer.asked_for == list(KINDS)
+
+
+def test_presidio_without_the_extra_fails_with_a_clear_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "presidio_analyzer", None)  # makes the import fail
+    with pytest.raises(RuntimeError, match="uv sync --extra presidio"):
+        PresidioDetector()
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("en_core_web_lg") is None,
+    reason="needs the presidio extra: uv sync --extra presidio",
+)
+def test_presidio_finds_names_the_regex_detector_misses() -> None:
+    text = "Yesterday Jane Mitchell sent the contract to Pieter de Vries."
+    redactor = Redactor(PresidioDetector())
+    assert redactor.redact(text) == "Yesterday <PERSON_1> sent the contract to <PERSON_2>."
+    assert RegexDetector().find(text) == []
