@@ -1,0 +1,59 @@
+# Model catalog and price table used by the router.
+#
+# provider        which adapter serves the model ("mock" or "ollama")
+# tier            1 = small and cheap, 2 = mid-range, 3 = premium
+# input_price     USD per 1M prompt tokens
+# output_price    USD per 1M completion tokens
+# context_window  max prompt + completion tokens the model accepts
+# capabilities    extra features a request can require, e.g. "json" for JSON mode
+#
+# Models whose provider is switched off are ignored at startup.
+
+# Mock models mirror typical commercial price points, so routing decisions and cost
+# savings are realistic in demos without calling a paid API.
+[[models]]
+id = "mock-small"
+provider = "mock"
+tier = 1
+input_price = 0.15
+output_price = 0.60
+context_window = 16000
+capabilities = []
+
+[[models]]
+id = "mock-medium"
+provider = "mock"
+tier = 2
+input_price = 1.00
+output_price = 4.00
+context_window = 128000
+capabilities = ["json"]
+
+[[models]]
+id = "mock-large"
+provider = "mock"
+tier = 3
+input_price = 5.00
+output_price = 15.00
+context_window = 200000
+capabilities = ["json"]
+
+# Local models cost nothing per token. context_window is kept at Ollama's conservative
+# default; raise it together with OLLAMA_CONTEXT_LENGTH on the Ollama server.
+[[models]]
+id = "gemma4:e4b"
+provider = "ollama"
+tier = 1
+input_price = 0
+output_price = 0
+context_window = 8192
+capabilities = ["json"]
+
+[[models]]
+id = "gemma4:12b"
+provider = "ollama"
+tier = 2
+input_price = 0
+output_price = 0
+context_window = 8192
+capabilities = ["json"]
