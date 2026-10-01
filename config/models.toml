@@ -1,6 +1,6 @@
 # Model catalog and price table used by the router.
 #
-# provider        which adapter serves the model ("mock" or "ollama")
+# provider        which adapter serves the model: "mock", "ollama", "openai" or "anthropic"
 # tier            1 = small and cheap, 2 = mid-range, 3 = premium
 # input_price     USD per 1M prompt tokens
 # output_price    USD per 1M completion tokens
@@ -56,4 +56,37 @@ tier = 2
 input_price = 0
 output_price = 0
 context_window = 8192
+capabilities = ["json"]
+
+# Cloud models: list prices checked on 2026-10-01. Update them when providers change theirs;
+# the usage ledger is only as accurate as this table.
+#
+# Anthropic models are added the same way, with provider = "anthropic" and the model id from
+# Anthropic's model list. Leave out the json capability: Anthropic's structured outputs need a
+# full schema, so it has no equivalent of OpenAI's "any JSON object" mode.
+[[models]]
+id = "gpt-6-luna"
+provider = "openai"
+tier = 1
+input_price = 0.10
+output_price = 0.50
+context_window = 1050000
+capabilities = ["json"]
+
+[[models]]
+id = "gpt-6.1-sol"
+provider = "openai"
+tier = 2
+input_price = 2.00
+output_price = 10.00
+context_window = 1050000
+capabilities = ["json"]
+
+[[models]]
+id = "gpt-6-astra"
+provider = "openai"
+tier = 3
+input_price = 10.00
+output_price = 50.00
+context_window = 1050000
 capabilities = ["json"]
