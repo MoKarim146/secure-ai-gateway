@@ -55,6 +55,14 @@ def malformed_body(request: httpx.Request) -> httpx.Response:
     return httpx.Response(200, json={"unexpected": True})
 
 
+def null_fields(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, json={"message": None, "choices": None, "content": None})
+
+
+def not_json(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, text="<html>proxy error</html>")
+
+
 def timeout(request: httpx.Request) -> httpx.Response:
     raise httpx.ReadTimeout("slow", request=request)
 
@@ -63,10 +71,22 @@ def connection_refused(request: httpx.Request) -> httpx.Response:
     raise httpx.ConnectError("refused", request=request)
 
 
-@pytest.mark.parametrize("handler", [server_error, malformed_body, timeout, connection_refused])
+FAILURES = [server_error, malformed_body, null_fields, not_json, timeout, connection_refused]
+
+
+@pytest.mark.parametrize("handler", FAILURES)
 def test_ollama_failures_become_provider_errors(handler: Handler) -> None:
     with pytest.raises(ProviderError):
         asyncio.run(ollama_with(handler).complete("m1", REQUEST))
+
+
+def test_provider_error_names_the_status_but_never_echoes_the_body() -> None:
+    def leaky(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": "cannot parse: jane@example.com"})
+
+    with pytest.raises(ProviderError) as error:
+        asyncio.run(ollama_with(leaky).complete("m1", REQUEST))
+    assert str(error.value) == "ollama: HTTP 400"
 
 
 def test_mock_json_mode_returns_valid_json() -> None:
