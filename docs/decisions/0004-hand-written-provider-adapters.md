@@ -26,5 +26,5 @@ malformed body) into a single `ProviderError` that triggers fallback.
   with no network.
 - Adding a provider means writing and testing one adapter. That is acceptable for a handful of
   providers; it would not scale to dozens, and the gateway doesn't need dozens.
-- Error messages carry only the exception type, never upstream bodies, which can echo
-  prompt content.
+- Error messages carry only the HTTP status or exception type, never upstream bodies, which
+  can echo prompt content.
